@@ -3,8 +3,9 @@ import csv,io
 from app.errors import DomainError
 from app.reader import decode
 from app.pipeline import calculate
-from app.store import save, latest, history, review, get_run
+from app.store import save, latest, history, review, get_run, get_version
 from app.web import bp as web
+from app.revisions.handler import bp as recheck_bp
 
 from app.modules.m1_receiving.handler import bp as bp1
 from app.modules.m2_coordinates.handler import bp as bp2
@@ -32,11 +33,12 @@ app.register_blueprint(bp4)
 app.register_blueprint(bp5)
 app.register_blueprint(bp6)
 app.register_blueprint(bp7)
+app.register_blueprint(recheck_bp)
 @app.before_request
 def validate_request_object():
     if request.method!='POST': return None
     if request.files:
-        if request.path!='/api/run' or 'file' not in request.files:
+        if 'file' not in request.files or not (request.path=='/api/run' or request.path.endswith('/recheck')):
             raise DomainError('REQUEST','上传必须使用file字段',400)
         return None
     if not request.is_json:
@@ -66,9 +68,16 @@ def decide():
     try: version=int(body.get('revision',0))
     except (ValueError,TypeError): raise DomainError('VERSION','版本必须为整数')
     return jsonify(review(body.get('id'),version,body.get('decision')))
+def _evidence_snapshot():
+    ident=request.args.get('run_id');revision=request.args.get('revision')
+    if ident and revision:
+        try: return get_version(ident,int(revision))
+        except ValueError: raise DomainError('VERSION','版本必须为整数')
+    if ident: return get_run(ident)
+    return latest() or save(calculate())
 @app.route('/api/evidence.csv')
 def evidence():
-    result=get_run(request.args['run_id']) if request.args.get('run_id') else (latest() or save(calculate()));out=io.StringIO(newline='')
+    result=_evidence_snapshot();out=io.StringIO(newline='')
     rows=[]
     for index,stage in result['stages'].items():
         rows.extend({'阶段':index,**r} for r in stage['rows'])
@@ -76,5 +85,23 @@ def evidence():
     fields=list(dict.fromkeys(['阶段','run_id','规则版本']+[k for r in rows for k in r]))
     writer=csv.DictWriter(out,fieldnames=fields);writer.writeheader()
     for row in rows: writer.writerow({'run_id':result['manifest']['run_id'],'规则版本':result['manifest']['rule_version'],**row})
-    return Response('\ufeff'+out.getvalue(),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=evidence.csv'})
+    recheck=result.get('manifest',{}).get('recheck')
+    if recheck:
+        out.write('\n# 云区复查遮罩对照\n')
+        mask_fields=['场景','原云区段数','复查云区段数','原有效宽度_度','新有效宽度_度','有效宽度差额_度']
+        writer=csv.DictWriter(out,fieldnames=mask_fields);writer.writeheader()
+        for row in recheck.get('mask_rows',[]): writer.writerow(row)
+        out.write('\n# 复查隔离记录\n')
+        rej_fields=['行号','scene','原因码','原因']
+        writer=csv.DictWriter(out,fieldnames=rej_fields);writer.writeheader()
+        for row in recheck.get('rejected',[]): writer.writerow({k:row.get(k,'') for k in rej_fields})
+        out.write('\n# 新旧覆盖与采购差额\n')
+        writer=csv.writer(out)
+        for key,value in recheck['diff'].items():
+            if isinstance(value,list):
+                value=';'.join(''.join(str(v) for v in item.values()) if isinstance(item,dict) else str(item) for item in value)
+            writer.writerow([key,value])
+        writer.writerow(['父批次版本',recheck.get('parent_revision')])
+        writer.writerow(['当前版本',result['revision']])
+    return Response('﻿'+out.getvalue(),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=evidence-r%s.csv'%result['revision']})
 if __name__=='__main__': app.run(host='0.0.0.0',port=8000)

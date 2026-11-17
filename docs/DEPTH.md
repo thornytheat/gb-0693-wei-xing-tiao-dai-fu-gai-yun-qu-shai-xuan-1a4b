@@ -15,6 +15,7 @@
 | M5 缺口定位 | 运行缺口定位并复核证据 | `POST /api/m5`；`/work/5` | `app/modules/m5_gaps/rules.py` | `tests/test_m5.py` |
 | M6 采购候选 | 运行采购候选并复核证据 | `POST /api/m6`；`/work/6` | `app/modules/m6_purchase/rules.py` | `tests/test_m6.py` |
 | M7 交付核验 | 运行交付核验并复核证据 | `POST /api/m7`；`/work/7` | `app/modules/m7_delivery/rules.py` | `tests/test_m7.py` |
+| M8 云区复查 | 提交复查遮罩、派生修正版本并核对新旧差额 | `POST /api/runs/<id>/recheck`；`/recheck` | `app/revisions/` | `tests/test_recheck.py` |
 
 ## 陷阱登记
 
@@ -28,6 +29,10 @@
 | TRAP-22 | 别名等价类 | 静默覆盖或误计 | 显式裁决并保留证据 | `app/modules/m2_coordinates/rules.py` | `tests/test_m2.py::test_alias_equivalence` |
 | TRAP-23 | 跨日界线 | 静默覆盖或误计 | 显式裁决并保留证据 | `app/modules/m2_coordinates/rules.py` | `tests/test_m2.py::test_dateline_split` |
 | TRAP-25 | 版本有效性 | 静默覆盖或误计 | 显式裁决并保留证据 | `app/modules/m2_coordinates/rules.py` | `tests/test_m2.py::test_newest_version_rules` |
+| TRAP-26 | 晚到旧修订倒退 | 旧遮罩覆盖新遮罩，冲掉签核证据 | 版本链单调校验，旧修订409拒绝 | `app/store.py::register_recheck` | `tests/test_recheck.py::test_stale_late_revision_rejected` |
+| TRAP-27 | 同版异值 | 按文件顺序盲目覆盖 | `RECHECK_CONFLICT` 整组隔离，不采信任一值 | `app/revisions/mask.py` | `tests/test_recheck.py::test_parse_same_version_conflict_isolated` |
+| TRAP-28 | 切换失败污染现行版 | 半失败状态覆盖已签核批次 | 先算后落库，失败只标记请求，runs指针不动 | `app/store.py::register_recheck` | `tests/test_recheck.py::test_failure_keeps_old_version_and_retry_uses_same_slot` |
+| TRAP-29 | 重试产生重复版本 | 同一复查反复派生新版本 | 请求键幂等，重试/续跑沿用原目标版本号 | `app/store.py::register_recheck` | `tests/test_recheck.py::test_retry_is_idempotent_and_adds_no_version` |
 
 ## 对账规则
 
